@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "description": "CCW Safety Map — a NY State concealed-carry awareness map highlighting CCIA-sensitive locations (on-premises liquor, schools, hospitals, courthouses, parks, transit, airports, places of worship, etc.)",
-  "homepage": "https://rafibarides.github.io/ccw-safety-map",
+  "homepage": "https://safecarrynys.com",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
