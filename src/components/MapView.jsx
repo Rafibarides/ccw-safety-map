@@ -1,5 +1,5 @@
 import { useEffect, useRef, memo } from 'react';
-import { Map, useMap, useMapsLibrary } from '@vis.gl/react-google-maps';
+import { Map as GoogleMap, useMap, useMapsLibrary } from '@vis.gl/react-google-maps';
 import { MarkerClusterer, SuperClusterAlgorithm } from '@googlemaps/markerclusterer';
 import { darkMapStyle, palette } from '../theme.js';
 import { CATEGORY_MAP } from '../data/categories.js';
@@ -346,7 +346,7 @@ export default memo(function MapView(props) {
   const hasMapId = Boolean(apiMapId);
 
   return (
-    <Map
+    <GoogleMap
       mapId={hasMapId ? apiMapId : undefined}
       styles={hasMapId ? undefined : darkMapStyle}
       defaultCenter={initialCenter}
@@ -358,6 +358,6 @@ export default memo(function MapView(props) {
       reuseMaps
     >
       <MapInner {...inner} />
-    </Map>
+    </GoogleMap>
   );
 });
