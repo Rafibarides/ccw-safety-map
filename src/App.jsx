@@ -11,9 +11,10 @@ import DetailDrawer from './components/DetailDrawer.jsx';
 import { CATEGORIES, CATEGORY_MAP } from './data/categories.js';
 import { TIMES_SQUARE_FEATURE, timesSquareInView } from './data/timesSquare.js';
 import { FAMOUS_PARKS, famousParksInView } from './data/famousParks.js';
-import { assessLocation, pointInFeature, SCHOOL_BUFFER_MIN_ZOOM } from './geo/geo.js';
+import { assessLocation, haversine, pointInFeature, SCHOOL_BUFFER_MIN_ZOOM } from './geo/geo.js';
 import {
   fetchLiquorCached,
+  fetchNycSchoolsCached,
   fetchOsmCached,
   liquorCatsEnabled,
   osmCatsEnabled,
@@ -32,6 +33,17 @@ const DEFAULT_ENABLED = CATEGORIES.map((c) => c.id);
 
 function bboxArea(b) {
   return Math.abs((b.north - b.south) * (b.east - b.west));
+}
+
+function dropSchoolDuplicates(features) {
+  const osmSchools = features.filter(
+    (feature) => feature.categoryId === 'school' && feature.source === 'OpenStreetMap'
+  );
+  if (!osmSchools.length) return features;
+  return features.filter((feature) => {
+    if (feature.categoryId !== 'school' || feature.source !== 'NYC Open Data') return true;
+    return !osmSchools.some((other) => haversine(feature, other) < 45);
+  });
 }
 
 function insideFamousPark(feature) {
@@ -92,11 +104,12 @@ export default function App() {
       }
       out.push(f);
     }
+    const visible = dropSchoolDuplicates(out);
     if (enabledSet.has('times_square') && timesSquareInView(bounds)) {
-      out.push(TIMES_SQUARE_FEATURE);
+      visible.push(TIMES_SQUARE_FEATURE);
     }
-    out.push(...officialParks);
-    return out;
+    visible.push(...officialParks);
+    return visible;
     // featureTick forces recompute when the cache mutates.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bounds, enabled, featureTick]);
@@ -146,8 +159,14 @@ export default function App() {
     // so it loads in the background and only surfaces a soft notice on failure.
     const wantLiquor = liquorCatsEnabled(enabled);
     const wantOsm = osmCatsEnabled(enabled);
+    const wantSchools = enabled.includes('school');
 
-    setLoading(wantLiquor);
+    let pending = (wantLiquor ? 1 : 0) + (wantSchools ? 1 : 0);
+    setLoading(pending > 0);
+    const finish = () => {
+      pending -= 1;
+      if (pending <= 0 && !ctrl.signal.aborted) setLoading(false);
+    };
 
     if (wantLiquor) {
       fetchLiquorCached(debouncedBounds, enabled, opts)
@@ -159,9 +178,20 @@ export default function App() {
           if (err.name === 'AbortError' || ctrl.signal.aborted) return;
           setError({ kind: 'partial', msg: 'Liquor data unavailable — retrying' });
         })
-        .finally(() => {
-          if (!ctrl.signal.aborted) setLoading(false);
-        });
+        .finally(finish);
+    }
+
+    if (wantSchools) {
+      fetchNycSchoolsCached(debouncedBounds, opts)
+        .then((rows) => {
+          if (ctrl.signal.aborted) return;
+          mergeIntoCache(rows);
+        })
+        .catch((err) => {
+          if (err.name === 'AbortError' || ctrl.signal.aborted) return;
+          setError({ kind: 'partial', msg: 'School locations unavailable — retrying' });
+        })
+        .finally(finish);
     }
 
     if (wantOsm) {
@@ -400,7 +430,8 @@ function AboutModal({ onClose }) {
           <h3>Data sources</h3>
           <ul>
             <li><b>Liquor licenses</b> — NY Open Data (NYS Liquor Authority)</li>
-            <li><b>Schools, hospitals, parks, libraries, courthouses, transit, airports, and the other place layers</b> — OpenStreetMap via Overpass</li>
+            <li><b>Schools in New York City</b> — NYC Open Data school buildings. Campuses outside the city still come from OpenStreetMap.</li>
+            <li><b>Hospitals, parks, libraries, courthouses, transit, airports, and the other place layers</b> — OpenStreetMap via Overpass</li>
             <li><b>Times Square</b> — NYC Admin Code § 10-315, traced to the street line</li>
             <li><b>Famous parks</b> — NYC Parks property boundaries</li>
           </ul>

@@ -11,7 +11,6 @@ const OVERPASS_ENDPOINTS = [
   'https://overpass.private.coffee/api/interpreter',
   'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
-  'https://overpass.osm.ch/api/interpreter',
 ];
 
 const ENDPOINT_TIMEOUT_MS = 12000;
@@ -24,6 +23,14 @@ let preferredEndpoint = null;
 function isHealthy(endpoint) {
   const until = cooldownUntil.get(endpoint);
   return !until || Date.now() > until;
+}
+
+// A live Overpass database stamps its extract with an ISO time. A mirror
+// that is up but has no map data answers 200 with an empty element list and a
+// junk timestamp. Treating that as success hides every school in view.
+function databaseIsLive(data) {
+  const stamp = data?.osm3s?.timestamp_osm_base;
+  return typeof stamp === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(stamp);
 }
 
 function orderedEndpoints() {
@@ -343,6 +350,11 @@ export async function fetchOverpassFeatures(bbox, categoryIds, { signal } = {}) 
         continue;
       }
       const data = await res.json();
+      if (!databaseIsLive(data)) {
+        cooldownUntil.set(endpoint, Date.now() + COOLDOWN_MS);
+        lastErr = new Error('Overpass database is empty');
+        continue;
+      }
       preferredEndpoint = endpoint;
       cooldownUntil.delete(endpoint);
       return (data.elements || [])
