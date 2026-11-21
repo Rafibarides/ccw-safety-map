@@ -10,10 +10,10 @@ export default function FilterPanel({
   onToggle,
   onAll,
   onNone,
-  showRadii,
-  onToggleRadii,
-  radiusScale,
-  onRadiusScale,
+  showOutlines,
+  onToggleOutlines,
+  showSchoolBuffer,
+  onToggleSchoolBuffer,
   counts,
 }) {
   useEffect(() => {
@@ -44,27 +44,32 @@ export default function FilterPanel({
         </header>
 
         <div className="panel-section">
-          <div className="panel-section-title">Awareness radii</div>
-          <div className="radius-row">
+          <div className="panel-section-title">How the law is drawn</div>
+          <div className="zone-options">
             <button
-              className={`pill-btn ${showRadii ? 'pill-on' : ''}`}
-              onClick={() => onToggleRadii(!showRadii)}
+              className={`pill-btn ${showOutlines ? 'pill-on' : ''}`}
+              onClick={() => onToggleOutlines(!showOutlines)}
             >
-              {showRadii ? <Eye size={14} /> : <EyeOff size={14} />}
-              <span>{showRadii ? 'Bubbles on' : 'Bubbles off'}</span>
+              {showOutlines ? <Eye size={14} /> : <EyeOff size={14} />}
+              <span>{showOutlines ? 'Outlines on' : 'Outlines off'}</span>
             </button>
-            <div className="scale-group" role="group" aria-label="Radius scale">
-              {[0.5, 1, 1.5, 2].map((s) => (
-                <button
-                  key={s}
-                  className={`scale-btn ${radiusScale === s ? 'scale-on' : ''}`}
-                  onClick={() => onRadiusScale(s)}
-                >
-                  {s}x
-                </button>
-              ))}
-            </div>
+            <button
+              className={`pill-btn ${showSchoolBuffer ? 'pill-on' : ''}`}
+              onClick={() => onToggleSchoolBuffer(!showSchoolBuffer)}
+              aria-pressed={showSchoolBuffer}
+            >
+              <span>{showSchoolBuffer ? 'K-12 federal buffer on' : 'K-12 federal buffer off'}</span>
+            </button>
           </div>
+          <p className="zone-note">
+            A bar, hospital, or house of worship is the premises only — no
+            circle around it. Schools and colleges are the building and grounds.
+            Central Park, Prospect Park, and the other famous city parks use
+            the NYC Parks property line. Times Square is a street perimeter.
+            Those lines stay drawn while their layer is on. The 1,000 ft school
+            ring is federal law, not the CCIA. It generally does not apply to a
+            New York pistol license, and it only appears when you are zoomed in.
+          </p>
         </div>
 
         <div className="panel-section">
@@ -104,9 +109,7 @@ export default function FilterPanel({
                     </span>
                     <span className="cat-text">
                       <span className="cat-label">{c.label}</span>
-                      <span className="cat-sub">
-                        {c.sensitive ? 'Sensitive' : 'Awareness'} · {c.radiusFt} ft
-                      </span>
+                      <span className="cat-sub">{c.extentLabel}</span>
                     </span>
                     <span className="cat-count">
                       <Circle
@@ -125,8 +128,8 @@ export default function FilterPanel({
 
         <div className="panel-footer">
           <p className="disclaimer">
-            Awareness tool only. Not legal advice. NY CCIA sensitive-location
-            rules and federal law change; verify before carrying.
+            Awareness tool only. Not legal advice. Sensitive-location rules
+            change; verify before carrying.
           </p>
         </div>
       </aside>

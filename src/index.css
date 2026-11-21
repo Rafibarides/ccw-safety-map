@@ -218,23 +218,41 @@ pre { padding: 12px 14px; overflow-x: auto; }
 .legend {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  justify-content: center;
   gap: 10px;
+  max-width: min(640px, calc(100% - 0px));
   padding: 6px 10px;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: 16px;
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
   font-size: 12px;
 }
 .legend-pill {
   display: inline-flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 6px;
   padding: 4px 10px;
-  border-radius: 999px;
+  border-radius: 12px;
   font-weight: 600;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.01em;
+  max-width: 100%;
+}
+.legend-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.legend-title { line-height: 1.3; }
+.legend-detail {
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--text-muted);
+  line-height: 1.35;
+  white-space: normal;
 }
 .legend-warn {
   color: var(--warn);
@@ -247,6 +265,12 @@ pre { padding: 12px 14px; overflow-x: auto; }
   background: rgba(57, 255, 122, 0.10);
   box-shadow: inset 0 0 0 1px rgba(57, 255, 122, 0.35),
     0 0 14px rgba(57, 255, 122, 0.14);
+}
+.legend-info {
+  color: var(--neon-amber);
+  background: rgba(255, 176, 32, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(255, 176, 32, 0.4),
+    0 0 14px rgba(255, 176, 32, 0.16);
 }
 .legend-counts { display: flex; align-items: center; gap: 6px; color: var(--text-muted); }
 .legend-sep { color: var(--text-dim); }
@@ -400,12 +424,17 @@ pre { padding: 12px 14px; overflow-x: auto; }
 .link-btn:hover { text-decoration: underline; }
 .dot-sep { color: var(--text-dim); }
 
-.radius-row {
+.zone-options {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 8px;
   margin-top: 10px;
+}
+.zone-note {
+  margin: 10px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-muted);
 }
 .pill-btn {
   display: inline-flex;
@@ -501,6 +530,8 @@ pre { padding: 12px 14px; overflow-x: auto; }
   box-shadow: var(--shadow-strong);
   padding: 16px 18px 18px;
   color: var(--text);
+  max-height: min(52vh, 480px);
+  overflow-y: auto;
 }
 @media (max-width: 720px) {
   .detail-drawer {
@@ -518,7 +549,7 @@ pre { padding: 12px 14px; overflow-x: auto; }
     border-radius: 16px;
   }
 }
-.detail-close { position: absolute; top: 8px; right: 8px; }
+.detail-close { position: sticky; top: 0; float: right; z-index: 1; margin: -4px -4px 0 8px; }
 .detail-badge {
   display: inline-flex;
   align-items: center;

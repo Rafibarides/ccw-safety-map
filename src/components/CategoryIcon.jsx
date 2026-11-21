@@ -13,6 +13,8 @@ import {
   TrainFront,
   Plane,
   Vote,
+  Map,
+  Library,
   MapPin,
 } from 'lucide-react';
 
@@ -31,6 +33,8 @@ const ICON_MAP = {
   TrainFront,
   Plane,
   Vote,
+  Map,
+  Library,
 };
 
 export default function CategoryIcon({ name, size = 16, color, strokeWidth = 2, ...rest }) {

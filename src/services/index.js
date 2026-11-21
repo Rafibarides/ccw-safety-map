@@ -3,12 +3,14 @@ import { fetchOverpassFeatures } from './overpass.js';
 import { buildCacheKey, cacheGet, cacheSet } from './cache.js';
 
 const LIQUOR_IDS = new Set(['liquor_onprem', 'liquor_offprem']);
+// Drawn locally from the statute, not from Overpass.
+const LOCAL_IDS = new Set(['times_square']);
 
 export function liquorCatsEnabled(enabledIds) {
   return enabledIds.some((id) => LIQUOR_IDS.has(id));
 }
 export function osmCatsEnabled(enabledIds) {
-  return enabledIds.some((id) => !LIQUOR_IDS.has(id));
+  return enabledIds.some((id) => !LIQUOR_IDS.has(id) && !LOCAL_IDS.has(id));
 }
 
 // Fetches NY liquor licenses for the bbox (Socrata — fast and reliable).
@@ -26,7 +28,7 @@ export async function fetchLiquorCached(bbox, enabledIds, { signal } = {}) {
 
 // Fetches OSM features for the bbox (Overpass — slower, sometimes down).
 export async function fetchOsmCached(bbox, enabledIds, { signal } = {}) {
-  const cats = enabledIds.filter((id) => !LIQUOR_IDS.has(id));
+  const cats = enabledIds.filter((id) => !LIQUOR_IDS.has(id) && !LOCAL_IDS.has(id));
   if (cats.length === 0) return [];
   const key = buildCacheKey('osm', bbox, cats);
   const hit = cacheGet(key);

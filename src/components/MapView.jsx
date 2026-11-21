@@ -1,78 +1,165 @@
 import { useEffect, useRef, memo } from 'react';
 import { Map, useMap, useMapsLibrary } from '@vis.gl/react-google-maps';
-import { MarkerClusterer } from '@googlemaps/markerclusterer';
+import { MarkerClusterer, SuperClusterAlgorithm } from '@googlemaps/markerclusterer';
 import { darkMapStyle, palette } from '../theme.js';
 import { CATEGORY_MAP } from '../data/categories.js';
+import { ICON_MARKUP } from '../data/iconMarkup.js';
+import { circleRing, SCHOOL_BUFFER_MIN_ZOOM, schoolBufferRadiusM } from '../geo/geo.js';
 
-const FT_PER_METER = 3.28084;
-const CIRCLE_MIN_ZOOM = 14;
-const PIN_MIN_ZOOM = 13;
+const iconUrlCache = new Map();
 
-function ftToMeters(ft) {
-  return ft / FT_PER_METER;
-}
-
-// SVG icon used for non-clustered markers. Two sizes so dots stay subtle at
-// lower zooms and grow into clear pins at higher zooms.
-function markerIconUrl(color, size = 26) {
-  const inner = Math.round(size * 0.15);
-  const outer = Math.round(size * 0.38);
+function markerIconUrl(color, iconName, size) {
+  const key = `${iconName}|${color}|${size}`;
+  const cached = iconUrlCache.get(key);
+  if (cached) return cached;
+  const markup = ICON_MARKUP[iconName] || ICON_MARKUP.MapPin;
+  const scale = (size * 0.56) / 24;
+  const offset = ((size - 24 * scale) / 2).toFixed(2);
   const svg =
-    `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 ${size} ${size}' width='${size}' height='${size}'>` +
-    `<circle cx='${size / 2}' cy='${size / 2}' r='${outer}' fill='%23050710' stroke='${encodeURIComponent(color)}' stroke-width='1.8'/>` +
-    `<circle cx='${size / 2}' cy='${size / 2}' r='${inner}' fill='${encodeURIComponent(color)}'/>` +
-    `</svg>`;
-  return `data:image/svg+xml;charset=UTF-8,${svg}`;
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">` +
+    `<circle cx="${size / 2}" cy="${size / 2}" r="${(size / 2 - 1.1).toFixed(2)}" fill="#050710" stroke="${color}" stroke-width="1.6"/>` +
+    `<g transform="translate(${offset} ${offset}) scale(${scale.toFixed(4)})" fill="none" stroke="${color}" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round">` +
+    markup +
+    `</g></svg>`;
+  const url = `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
+  iconUrlCache.set(key, url);
+  return url;
 }
 
-function clusterIconUrl(count, color = palette.neonCyan) {
-  const size = count >= 100 ? 56 : count >= 25 ? 48 : 40;
-  const inner = Math.round(size * 0.62);
-  const outer = Math.round(size * 0.46);
+// Soft heat blob. Sparse groups stay dim and cool. A tight pile of sensitive
+// places burns hotter and wider, and fades out instead of drawing a hard circle.
+function glowIconUrl(count) {
+  const heat = Math.max(0, Math.min(1, Math.log(count) / Math.log(90)));
+  const size = Math.round(48 + heat * 68);
+  const core = heat > 0.72 ? '#ff3b6b' : heat > 0.38 ? '#ff2bd6' : '#c084fc';
+  const mid = heat > 0.5 ? '#ff2bd6' : '#9d6cff';
+  const edge = heat > 0.35 ? '#ff2bd6' : '#7c5cff';
+  const coreA = (0.5 + heat * 0.45).toFixed(2);
+  const midA = (0.22 + heat * 0.28).toFixed(2);
+  const edgeA = (0.06 + heat * 0.1).toFixed(2);
   const svg =
-    `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 ${size} ${size}' width='${size}' height='${size}'>` +
-    `<circle cx='${size / 2}' cy='${size / 2}' r='${outer}' fill='${encodeURIComponent(color)}' opacity='0.18'/>` +
-    `<circle cx='${size / 2}' cy='${size / 2}' r='${inner / 2}' fill='%23050710' stroke='${encodeURIComponent(color)}' stroke-width='1.8'/>` +
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 100 100">` +
+    `<defs><radialGradient id="g" cx="50%" cy="50%" r="50%">` +
+    `<stop offset="0%" stop-color="${core}" stop-opacity="${coreA}"/>` +
+    `<stop offset="16%" stop-color="${core}" stop-opacity="${(Number(coreA) * 0.82).toFixed(2)}"/>` +
+    `<stop offset="42%" stop-color="${mid}" stop-opacity="${midA}"/>` +
+    `<stop offset="72%" stop-color="${edge}" stop-opacity="${edgeA}"/>` +
+    `<stop offset="100%" stop-color="${edge}" stop-opacity="0"/>` +
+    `</radialGradient></defs>` +
+    `<circle cx="50" cy="50" r="50" fill="url(#g)"/>` +
     `</svg>`;
-  return `data:image/svg+xml;charset=UTF-8,${svg}`;
+  return {
+    url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
+    size,
+    heat,
+  };
 }
 
-function AwarenessCircles({ features, radiusScale, visible }) {
+function PlaceOutlines({ features, visible, onFeatureSelect }) {
   const map = useMap();
   const mapsApi = useMapsLibrary('maps');
-  const circlesRef = useRef([]);
+  const shapesRef = useRef([]);
 
   useEffect(() => {
     if (!map || !mapsApi) return;
 
-    for (const c of circlesRef.current) c.setMap(null);
-    circlesRef.current = [];
+    for (const shape of shapesRef.current) {
+      shape.listener?.remove();
+      shape.polygon.setMap(null);
+    }
+    shapesRef.current = [];
 
-    if (!visible) return;
-
-    for (const f of features) {
-      const cat = CATEGORY_MAP[f.categoryId];
+    for (const feature of features) {
+      if (!feature.polygons?.length) continue;
+      const cat = CATEGORY_MAP[feature.categoryId];
       if (!cat) continue;
-      const radius = ftToMeters(cat.radiusFt * radiusScale);
-      const circle = new mapsApi.Circle({
-        center: { lat: f.lat, lng: f.lng },
-        radius,
-        strokeColor: cat.color,
-        strokeOpacity: 0.55,
-        strokeWeight: 1,
-        fillColor: cat.color,
-        fillOpacity: cat.sensitive ? 0.08 : 0.04,
-        clickable: false,
-        map,
-      });
-      circlesRef.current.push(circle);
+      const legalLine = Boolean(feature.perimeter);
+      if (!visible && !legalLine) continue;
+      const timesSquare = feature.categoryId === 'times_square';
+      for (const poly of feature.polygons) {
+        const paths = [poly.outer, ...(poly.holes || [])];
+        const polygon = new mapsApi.Polygon({
+          paths,
+          strokeColor: cat.color,
+          strokeOpacity: legalLine ? 0.95 : 0.9,
+          strokeWeight: timesSquare ? 3 : legalLine ? 2.5 : 2,
+          fillColor: cat.color,
+          fillOpacity: legalLine ? 0.1 : 0.18,
+          clickable: true,
+          zIndex: timesSquare ? 2 : legalLine ? 1 : 3,
+          map,
+        });
+        const listener = polygon.addListener('click', () => onFeatureSelect?.(feature));
+        shapesRef.current.push({ polygon, listener });
+      }
     }
 
     return () => {
-      for (const c of circlesRef.current) c.setMap(null);
-      circlesRef.current = [];
+      for (const shape of shapesRef.current) {
+        shape.listener?.remove();
+        shape.polygon.setMap(null);
+      }
+      shapesRef.current = [];
     };
-  }, [map, mapsApi, features, radiusScale, visible]);
+  }, [map, mapsApi, features, visible, onFeatureSelect]);
+
+  return null;
+}
+
+function SchoolBuffers({ features, visible }) {
+  const map = useMap();
+  const mapsApi = useMapsLibrary('maps');
+  const shapesRef = useRef([]);
+
+  useEffect(() => {
+    if (!map || !mapsApi) return;
+
+    for (const shape of shapesRef.current) shape.setMap(null);
+    shapesRef.current = [];
+
+    if (!visible) return;
+
+    const schools = features.filter((feature) => feature.categoryId === 'school');
+    const color = CATEGORY_MAP.school?.color || palette.neonMagenta;
+
+    for (const school of schools) {
+      const radius = schoolBufferRadiusM(school);
+      const fill = new mapsApi.Circle({
+        center: { lat: school.lat, lng: school.lng },
+        radius,
+        strokeOpacity: 0,
+        fillColor: color,
+        fillOpacity: 0.045,
+        clickable: false,
+        zIndex: 0,
+        map,
+      });
+      const dash = new mapsApi.Polyline({
+        path: circleRing({ lat: school.lat, lng: school.lng }, radius),
+        strokeOpacity: 0,
+        clickable: false,
+        icons: [
+          {
+            icon: {
+              path: 'M 0,-1 0,1',
+              strokeOpacity: 0.85,
+              strokeColor: color,
+              scale: 2,
+            },
+            offset: '0',
+            repeat: '12px',
+          },
+        ],
+        map,
+      });
+      shapesRef.current.push(fill, dash);
+    }
+
+    return () => {
+      for (const shape of shapesRef.current) shape.setMap(null);
+      shapesRef.current = [];
+    };
+  }, [map, mapsApi, features, visible]);
 
   return null;
 }
@@ -132,8 +219,9 @@ function MarkerLayer({ features, onFeatureSelect, zoom }) {
 
     if (!features.length) return;
 
-    const size = zoom >= CIRCLE_MIN_ZOOM ? 28 : zoom >= PIN_MIN_ZOOM ? 22 : 16;
+    const size = zoom >= 16 ? 34 : zoom >= 14 ? 28 : 22;
     const anchor = size / 2;
+    const clustered = [];
 
     const markers = features.map((f) => {
       const cat = CATEGORY_MAP[f.categoryId];
@@ -143,43 +231,42 @@ function MarkerLayer({ features, onFeatureSelect, zoom }) {
         title: f.name,
         optimized: true,
         icon: {
-          url: markerIconUrl(color, size),
+          url: markerIconUrl(color, cat?.icon, size),
           scaledSize: new coreApi.Size(size, size),
           anchor: new coreApi.Point(anchor, anchor),
         },
       });
       marker.addListener('click', () => onFeatureSelect?.(f));
+      if (f.perimeter) marker.setMap(map);
+      else clustered.push(marker);
       return marker;
     });
     markersRef.current = markers;
 
     clustererRef.current = new MarkerClusterer({
       map,
-      markers,
+      markers: clustered,
+      algorithm: new SuperClusterAlgorithm({ radius: 72, maxZoom: 16, minPoints: 2 }),
       renderer: {
         render: ({ count, position }) => {
-          const color =
-            count >= 100
-              ? palette.neonMagenta
-              : count >= 25
-              ? palette.neonAmber
-              : palette.neonCyan;
-          const size = count >= 100 ? 56 : count >= 25 ? 48 : 40;
+          const glow = glowIconUrl(count);
           return new markerApi.Marker({
             position,
-            label: {
-              text: String(count),
-              color: '#04111a',
-              fontFamily: 'Inter, system-ui, sans-serif',
-              fontSize: count >= 100 ? '13px' : '12px',
-              fontWeight: '700',
-            },
+            optimized: false,
             icon: {
-              url: clusterIconUrl(count, color),
-              scaledSize: new coreApi.Size(size, size),
-              anchor: new coreApi.Point(size / 2, size / 2),
+              url: glow.url,
+              scaledSize: new coreApi.Size(glow.size, glow.size),
+              anchor: new coreApi.Point(glow.size / 2, glow.size / 2),
             },
-            zIndex: 1_000_000 + count,
+            shape: {
+              type: 'circle',
+              coords: [
+                Math.round(glow.size / 2),
+                Math.round(glow.size / 2),
+                Math.round(glow.size * 0.28),
+              ],
+            },
+            zIndex: Math.round(1_000_000 + glow.heat * 1000 + count),
           });
         },
       },
@@ -202,8 +289,8 @@ function MarkerLayer({ features, onFeatureSelect, zoom }) {
 function MapInner({
   features,
   onFeatureSelect,
-  showRadii,
-  radiusScale,
+  showOutlines,
+  showSchoolBuffer,
   highlightPoint,
   onBoundsChange,
   focusRequest,
@@ -242,11 +329,12 @@ function MapInner({
     }
   }, [map, focusRequest]);
 
-  const circlesVisible = showRadii && (zoom || 0) >= CIRCLE_MIN_ZOOM;
+  const buffersVisible = showSchoolBuffer && (zoom || 0) >= SCHOOL_BUFFER_MIN_ZOOM;
 
   return (
     <>
-      <AwarenessCircles features={features} radiusScale={radiusScale} visible={circlesVisible} />
+      <SchoolBuffers features={features} visible={buffersVisible} />
+      <PlaceOutlines features={features} visible={showOutlines} onFeatureSelect={onFeatureSelect} />
       <HighlightCircle point={highlightPoint} />
       <MarkerLayer features={features} onFeatureSelect={onFeatureSelect} zoom={zoom || 0} />
     </>

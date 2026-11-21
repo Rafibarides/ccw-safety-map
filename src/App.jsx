@@ -9,6 +9,9 @@ import Legend from './components/Legend.jsx';
 import DetailDrawer from './components/DetailDrawer.jsx';
 
 import { CATEGORIES, CATEGORY_MAP } from './data/categories.js';
+import { TIMES_SQUARE_FEATURE, timesSquareInView } from './data/timesSquare.js';
+import { FAMOUS_PARKS, famousParksInView } from './data/famousParks.js';
+import { assessLocation, pointInFeature, SCHOOL_BUFFER_MIN_ZOOM } from './geo/geo.js';
 import {
   fetchLiquorCached,
   fetchOsmCached,
@@ -17,7 +20,6 @@ import {
 } from './services/index.js';
 import { useDebouncedValue } from './hooks/useDebounce.js';
 
-const FT_PER_METER = 3.28084;
 const API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
 const MAP_ID = import.meta.env.VITE_GOOGLE_MAPS_MAP_ID;
 
@@ -32,23 +34,22 @@ function bboxArea(b) {
   return Math.abs((b.north - b.south) * (b.east - b.west));
 }
 
-function haversine(a, b) {
-  const R = 6371000;
-  const toRad = (v) => (v * Math.PI) / 180;
-  const dLat = toRad(b.lat - a.lat);
-  const dLng = toRad(b.lng - a.lng);
-  const lat1 = toRad(a.lat);
-  const lat2 = toRad(b.lat);
-  const h =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
-  return 2 * R * Math.asin(Math.sqrt(h));
+function insideFamousPark(feature) {
+  const point = { lat: feature.lat, lng: feature.lng };
+  for (const park of FAMOUS_PARKS) {
+    const box = park.bounds;
+    if (point.lat < box.south || point.lat > box.north || point.lng < box.west || point.lng > box.east) {
+      continue;
+    }
+    if (pointInFeature(point, park)) return true;
+  }
+  return false;
 }
 
 export default function App() {
   const [enabled, setEnabled] = useState(DEFAULT_ENABLED);
-  const [showRadii, setShowRadii] = useState(true);
-  const [radiusScale, setRadiusScale] = useState(1);
+  const [showOutlines, setShowOutlines] = useState(true);
+  const [showSchoolBuffer, setShowSchoolBuffer] = useState(false);
   const [panelOpen, setPanelOpen] = useState(false);
   const [bounds, setBounds] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -79,13 +80,22 @@ export default function App() {
     const e = bounds.east + padLng;
     const w = bounds.west - padLng;
     const enabledSet = new Set(enabled);
+    const parkLayer = enabledSet.has('park');
+    const officialParks = parkLayer ? famousParksInView(bounds) : [];
     const out = [];
     for (const f of featureCacheRef.current.values()) {
       if (!enabledSet.has(f.categoryId)) continue;
       if (f.lat < s || f.lat > n) continue;
       if (f.lng < w || f.lng > e) continue;
+      if (parkLayer && f.categoryId === 'park' && f.source === 'OpenStreetMap' && insideFamousPark(f)) {
+        continue;
+      }
       out.push(f);
     }
+    if (enabledSet.has('times_square') && timesSquareInView(bounds)) {
+      out.push(TIMES_SQUARE_FEATURE);
+    }
+    out.push(...officialParks);
     return out;
     // featureTick forces recompute when the cache mutates.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -185,18 +195,16 @@ export default function App() {
   );
   const awarenessCount = features.length - sensitiveCount;
 
-  // Is the active highlightPoint (or map center) inside any sensitive radius?
-  const insideSensitive = useMemo(() => {
-    const probe = highlightPoint || bounds?.center;
-    if (!probe) return false;
-    for (const f of features) {
-      const cat = CATEGORY_MAP[f.categoryId];
-      if (!cat?.sensitive) continue;
-      const r = (cat.radiusFt * radiusScale) / FT_PER_METER;
-      if (haversine(probe, { lat: f.lat, lng: f.lng }) <= r) return true;
-    }
-    return false;
-  }, [features, highlightPoint, bounds, radiusScale]);
+  const placeStatus = useMemo(
+    () =>
+      assessLocation({
+        probe: bounds?.center,
+        highlight: highlightPoint,
+        features,
+        schoolBuffer: showSchoolBuffer && (bounds?.zoom || 0) >= SCHOOL_BUFFER_MIN_ZOOM,
+      }),
+    [features, highlightPoint, bounds, showSchoolBuffer]
+  );
 
   const toggleCat = useCallback((id) => {
     setEnabled((prev) =>
@@ -252,8 +260,8 @@ export default function App() {
             initialZoom={DEFAULT_VIEW.zoom}
             features={features}
             onFeatureSelect={setSelected}
-            showRadii={showRadii}
-            radiusScale={radiusScale}
+            showOutlines={showOutlines}
+            showSchoolBuffer={showSchoolBuffer}
             highlightPoint={highlightPoint}
             onBoundsChange={onBoundsChange}
             focusRequest={focusRequest}
@@ -286,7 +294,7 @@ export default function App() {
           <Legend
             sensitiveCount={sensitiveCount}
             awarenessCount={awarenessCount}
-            insideSensitive={insideSensitive}
+            status={placeStatus}
           />
         </div>
 
@@ -319,10 +327,10 @@ export default function App() {
           onToggle={toggleCat}
           onAll={enableAll}
           onNone={disableAll}
-          showRadii={showRadii}
-          onToggleRadii={setShowRadii}
-          radiusScale={radiusScale}
-          onRadiusScale={setRadiusScale}
+          showOutlines={showOutlines}
+          onToggleOutlines={setShowOutlines}
+          showSchoolBuffer={showSchoolBuffer}
+          onToggleSchoolBuffer={setShowSchoolBuffer}
           counts={counts}
         />
 
@@ -363,27 +371,45 @@ function AboutModal({ onClose }) {
         </header>
         <div className="modal-body">
           <p>
-            Going to that barn wedding upstate? Quickly check whether the
-            venue is on-premises licensed, near a school, or otherwise inside
-            a NY State CCIA sensitive location.
+            Going to that barn wedding upstate? Check whether the venue itself
+            is an on-premises license, and whether you are standing inside a
+            mapped no-carry place — a school campus, a park, a hospital, or
+            the Times Square street grid.
+          </p>
+          <h3>Where the line is</h3>
+          <p>
+            Penal Law § 265.01-e bans carry in or on a sensitive location. For
+            a bar, restaurant, hospital, house of worship, courthouse, or
+            transit station, that is the place itself. There is no buffer on
+            the sidewalk or the business next door. Schools, colleges, and
+            parks are the place itself. Central Park, Prospect Park, Flushing
+            Meadows, Pelham Bay, and the other famous city parks are drawn on
+            the NYC Parks property line. Inside that line is the park. A street
+            outside the property is not.
+          </p>
+          <p>
+            Times Square is a separate street perimeter: NYC Admin Code § 10-315.
+            Building interiors inside that line are not part of the Times Square zone.
+          </p>
+          <p>
+            Federal law adds 1,000 feet around K-12 grounds (18 USC § 922(q)).
+            That layer is off until you turn it on. It generally does not apply
+            to a person licensed by New York, because Penal Law § 400.00 has
+            law enforcement verify eligibility before a pistol license is issued.
           </p>
           <h3>Data sources</h3>
           <ul>
             <li><b>Liquor licenses</b> — NY Open Data (NYS Liquor Authority)</li>
-            <li><b>Schools, hospitals, parks, courthouses, transit, airports, post offices, gov buildings, places of worship, daycares</b> — OpenStreetMap via Overpass</li>
+            <li><b>Schools, hospitals, parks, libraries, courthouses, transit, airports, and the other place layers</b> — OpenStreetMap via Overpass</li>
+            <li><b>Times Square</b> — NYC Admin Code § 10-315, traced to the street line</li>
+            <li><b>Famous parks</b> — NYC Parks property boundaries</li>
           </ul>
-          <h3>Sensitivity classification</h3>
-          <p>
-            Each layer maps to NY Penal Law § 265.01-e (the CCIA "sensitive
-            locations" statute) where applicable. Bars, restaurants and other
-            on-premises licensed venues are flagged as sensitive; off-premises
-            stores (grocery wine, liquor stores) are shown for awareness only.
-          </p>
           <h3>Disclaimer</h3>
           <p>
             This is an awareness tool, not legal advice. Sensitive-location
-            rules and litigation status change. Verify with current statutes
-            and counsel before acting.
+            rules and court orders change. The statute also covers places this
+            map does not draw, including shelters, theaters, and permitted
+            events. Verify before carrying.
           </p>
         </div>
       </div>

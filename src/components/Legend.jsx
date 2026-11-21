@@ -1,20 +1,17 @@
-import { ShieldAlert, ShieldCheck } from 'lucide-react';
+import { Info, ShieldAlert, ShieldCheck } from 'lucide-react';
 
-export default function Legend({ sensitiveCount, awarenessCount, insideSensitive }) {
+export default function Legend({ status, sensitiveCount, awarenessCount }) {
+  const tone = status?.tone || 'ok';
+  const Icon = tone === 'ok' ? ShieldCheck : tone === 'info' ? Info : ShieldAlert;
+
   return (
     <div className="legend">
-      <div className={`legend-pill ${insideSensitive ? 'legend-warn' : 'legend-ok'}`}>
-        {insideSensitive ? (
-          <>
-            <ShieldAlert size={14} />
-            <span>Inside a sensitive zone</span>
-          </>
-        ) : (
-          <>
-            <ShieldCheck size={14} />
-            <span>Clear of visible zones</span>
-          </>
-        )}
+      <div className={`legend-pill legend-${tone === 'warn' ? 'warn' : tone === 'info' ? 'info' : 'ok'}`}>
+        <Icon size={14} />
+        <span className="legend-copy">
+          <span className="legend-title">{status?.title || 'Outside mapped no-carry areas'}</span>
+          {status?.detail && <span className="legend-detail">{status.detail}</span>}
+        </span>
       </div>
       <div className="legend-counts">
         <span className="legend-count legend-warn-text">{sensitiveCount} sensitive</span>

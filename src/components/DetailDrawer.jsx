@@ -59,7 +59,7 @@ export default function DetailDrawer({ feature, onClose }) {
       </div>
       <div className="detail-meta">
         <span className="detail-source">Source: {feature.source}</span>
-        <span className="detail-radius">Buffer: {cat.radiusFt} ft</span>
+        <span className="detail-radius">{cat.extentLabel}</span>
       </div>
     </div>
   );
