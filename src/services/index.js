@@ -1,5 +1,6 @@
 import { fetchLiquorLicenses } from './liquorLicenses.js';
 import { fetchNycSchools } from './nycSchools.js';
+import { fetchOfficialPlaces, OFFICIAL_PLACE_IDS } from './officialPlaces.js';
 import { fetchOverpassFeatures } from './overpass.js';
 import { buildCacheKey, cacheGet, cacheSet } from './cache.js';
 
@@ -35,6 +36,17 @@ export async function fetchOsmCached(bbox, enabledIds, { signal } = {}) {
   const hit = cacheGet(key);
   if (hit) return hit;
   const rows = await fetchOverpassFeatures(bbox, cats, { signal });
+  cacheSet(key, rows);
+  return rows;
+}
+
+export async function fetchOfficialPlacesCached(bbox, enabledIds, { signal } = {}) {
+  const cats = enabledIds.filter((id) => OFFICIAL_PLACE_IDS.includes(id));
+  if (cats.length === 0) return [];
+  const key = buildCacheKey('official', bbox, cats);
+  const hit = cacheGet(key);
+  if (hit) return hit;
+  const rows = await fetchOfficialPlaces(bbox, cats, { signal });
   cacheSet(key, rows);
   return rows;
 }

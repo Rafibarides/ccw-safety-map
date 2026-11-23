@@ -15,10 +15,12 @@ import { assessLocation, haversine, pointInFeature, SCHOOL_BUFFER_MIN_ZOOM } fro
 import {
   fetchLiquorCached,
   fetchNycSchoolsCached,
+  fetchOfficialPlacesCached,
   fetchOsmCached,
   liquorCatsEnabled,
   osmCatsEnabled,
 } from './services/index.js';
+import { OFFICIAL_PLACE_IDS } from './services/officialPlaces.js';
 import { useDebouncedValue } from './hooks/useDebounce.js';
 
 const API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
@@ -35,14 +37,22 @@ function bboxArea(b) {
   return Math.abs((b.north - b.south) * (b.east - b.west));
 }
 
-function dropSchoolDuplicates(features) {
-  const osmSchools = features.filter(
-    (feature) => feature.categoryId === 'school' && feature.source === 'OpenStreetMap'
-  );
-  if (!osmSchools.length) return features;
+const OFFICIAL_SOURCES = new Set([
+  'NYC Open Data',
+  'NYC Parks',
+  'NYS Department of Health',
+  'NYC Health',
+  'MTA',
+]);
+
+function dropOsmNearOfficial(features) {
+  const official = features.filter((feature) => OFFICIAL_SOURCES.has(feature.source));
+  if (!official.length) return features;
   return features.filter((feature) => {
-    if (feature.categoryId !== 'school' || feature.source !== 'NYC Open Data') return true;
-    return !osmSchools.some((other) => haversine(feature, other) < 45);
+    if (feature.source !== 'OpenStreetMap') return true;
+    return !official.some(
+      (other) => other.categoryId === feature.categoryId && haversine(feature, other) < 45
+    );
   });
 }
 
@@ -99,12 +109,17 @@ export default function App() {
       if (!enabledSet.has(f.categoryId)) continue;
       if (f.lat < s || f.lat > n) continue;
       if (f.lng < w || f.lng > e) continue;
-      if (parkLayer && f.categoryId === 'park' && f.source === 'OpenStreetMap' && insideFamousPark(f)) {
+      if (
+        parkLayer &&
+        f.categoryId === 'park' &&
+        (f.source === 'OpenStreetMap' || f.source === 'NYC Parks') &&
+        insideFamousPark(f)
+      ) {
         continue;
       }
       out.push(f);
     }
-    const visible = dropSchoolDuplicates(out);
+    const visible = dropOsmNearOfficial(out);
     if (enabledSet.has('times_square') && timesSquareInView(bounds)) {
       visible.push(TIMES_SQUARE_FEATURE);
     }
@@ -160,8 +175,9 @@ export default function App() {
     const wantLiquor = liquorCatsEnabled(enabled);
     const wantOsm = osmCatsEnabled(enabled);
     const wantSchools = enabled.includes('school');
+    const wantOfficial = enabled.some((id) => OFFICIAL_PLACE_IDS.includes(id));
 
-    let pending = (wantLiquor ? 1 : 0) + (wantSchools ? 1 : 0);
+    let pending = (wantLiquor ? 1 : 0) + (wantSchools ? 1 : 0) + (wantOfficial ? 1 : 0);
     setLoading(pending > 0);
     const finish = () => {
       pending -= 1;
@@ -190,6 +206,19 @@ export default function App() {
         .catch((err) => {
           if (err.name === 'AbortError' || ctrl.signal.aborted) return;
           setError({ kind: 'partial', msg: 'School locations unavailable — retrying' });
+        })
+        .finally(finish);
+    }
+
+    if (wantOfficial) {
+      fetchOfficialPlacesCached(debouncedBounds, enabled, opts)
+        .then((rows) => {
+          if (ctrl.signal.aborted) return;
+          mergeIntoCache(rows);
+        })
+        .catch((err) => {
+          if (err.name === 'AbortError' || ctrl.signal.aborted) return;
+          setError({ kind: 'partial', msg: 'Some place lists are unavailable — retrying' });
         })
         .finally(finish);
     }
@@ -431,7 +460,11 @@ function AboutModal({ onClose }) {
           <ul>
             <li><b>Liquor licenses</b> — NY Open Data (NYS Liquor Authority)</li>
             <li><b>Schools in New York City</b> — NYC Open Data school buildings. Campuses outside the city still come from OpenStreetMap.</li>
-            <li><b>Hospitals, parks, libraries, courthouses, transit, airports, and the other place layers</b> — OpenStreetMap via Overpass</li>
+            <li><b>Parks</b> — NYC Parks property list. Famous parks keep their property outline.</li>
+            <li><b>Hospitals</b> — NYS Department of Health facility list</li>
+            <li><b>Child care</b> — NYC Health regulated programs</li>
+            <li><b>Subway stations</b> — MTA station list</li>
+            <li><b>Libraries, courthouses, houses of worship, colleges, and the other place layers</b> — OpenStreetMap via Overpass</li>
             <li><b>Times Square</b> — NYC Admin Code § 10-315, traced to the street line</li>
             <li><b>Famous parks</b> — NYC Parks property boundaries</li>
           </ul>
